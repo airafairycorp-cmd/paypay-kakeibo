@@ -26,6 +26,8 @@
     --green:#6E8C5E;
     --wisteria:#9C93AE;
     --gold:#B98A2E;
+    --blue:#1976D2;
+    --blue-soft:#E3F0FC;
     --shadow: 0 2px 10px rgba(42,43,46,0.08);
   }
   *{box-sizing:border-box;}
@@ -158,6 +160,39 @@
     text-align:center;
     padding:10px 0;
   }
+  .income-summary{
+    text-align:center;
+    font-size:12px;
+    font-weight:700;
+    color:var(--blue);
+    margin:2px 0 14px;
+  }
+  .type-toggle{
+    display:flex;
+    gap:6px;
+  }
+  .type-btn{
+    flex:1;
+    border:1px solid var(--brown-line);
+    background:#fff;
+    border-radius:8px;
+    padding:8px;
+    font-size:13px;
+    font-weight:700;
+    cursor:pointer;
+    color:var(--ink-soft);
+    font-family:'Zen Kaku Gothic New', sans-serif;
+  }
+  .type-btn.expense.selected{
+    background:var(--red);
+    border-color:var(--red);
+    color:#fff;
+  }
+  .type-btn.income.selected{
+    background:var(--blue);
+    border-color:var(--blue);
+    color:#fff;
+  }
   .tabs{
     display:flex;
     gap:6px;
@@ -230,11 +265,17 @@
   .today .day-num{color:var(--green); font-weight:700;}
   .day-cell.sun .day-num{color:var(--red);}
   .day-cell.sat .day-num{color:var(--wisteria);}
+  .day-total-wrap{
+    display:flex;
+    flex-direction:column;
+    align-items:flex-end;
+    gap:2px;
+    max-width:100%;
+  }
   .day-total-tab{
-    align-self:flex-end;
     background:var(--red);
     color:#fff;
-    font-size:10px;
+    font-size:9.5px;
     font-weight:700;
     padding:1px 5px;
     border-radius:8px 3px 8px 3px;
@@ -243,6 +284,9 @@
     overflow:hidden;
     text-overflow:ellipsis;
     white-space:nowrap;
+  }
+  .day-total-tab.income{
+    background:var(--blue);
   }
   .fab{
     position:fixed;
@@ -444,11 +488,12 @@
 
   <div class="stamp-row">
     <div class="stamp">
-      <div class="stamp-label">合計</div>
+      <div class="stamp-label">支出</div>
       <div class="stamp-amount" id="monthTotal">¥0</div>
     </div>
     <div class="cat-breakdown" id="catBreakdown"></div>
   </div>
+  <div class="income-summary" id="incomeSummary" style="display:none;"></div>
 
   <div class="tabs">
     <button class="tab-btn active" data-tab="calendar">カレンダー</button>
@@ -464,7 +509,7 @@
 
   <div class="panel" id="panel-import">
     <div class="import-box">
-      <p>PayPayアプリでダウンロードした取引履歴CSVを読み込むと、まとめてカレンダーに記録できます。</p>
+      <p>PayPayアプリでダウンロードした取引履歴CSVを読み込むと、まとめてカレンダーに記録できます。「出金」は支出（赤）、「入金」は収入（青）として自動で登録されます。</p>
       <label class="file-label" for="csvFile">CSVファイルを選ぶ</label>
       <input type="file" id="csvFile" accept=".csv,text/csv">
       <div class="import-status" id="importStatus"></div>
@@ -510,6 +555,13 @@
         <input type="text" id="inputMemo" placeholder="例：スーパーで食材">
       </div>
       <div class="field">
+        <label>種別</label>
+        <div class="type-toggle" id="typeToggle">
+          <button type="button" class="type-btn expense selected" data-type="expense">支出（赤）</button>
+          <button type="button" class="type-btn income" data-type="income">収入（青）</button>
+        </div>
+      </div>
+      <div class="field" id="categoryField">
         <label>カテゴリ</label>
         <div class="cat-chips" id="catChips"></div>
       </div>
@@ -531,12 +583,15 @@
     {key:'その他', color:'#6B6B70'},
   ];
   const catColor = k => (CATEGORIES.find(c=>c.key===k)||CATEGORIES[5]).color;
+  const INCOME_COLOR = '#1976D2';
+  const entryColor = e => e.type === 'income' ? INCOME_COLOR : catColor(e.category);
 
   const STORAGE_KEY = 'paypay-kakeibo-entries';
   let entries = [];
   let currentYear, currentMonth;
   let selectedDate = null;
   let selectedCategory = '食費';
+  let selectedType = 'expense';
 
   const todayStr = ()=> fmtDate(new Date());
   function fmtDate(d){
@@ -585,11 +640,22 @@
 
   function renderStamp(){
     const monthEntries = entriesForMonth(currentYear, currentMonth);
-    const total = monthEntries.reduce((s,e)=>s+e.amount,0);
+    const expenseEntries = monthEntries.filter(e=>e.type!=='income');
+    const incomeEntries = monthEntries.filter(e=>e.type==='income');
+    const total = expenseEntries.reduce((s,e)=>s+e.amount,0);
+    const incomeTotal = incomeEntries.reduce((s,e)=>s+e.amount,0);
     document.getElementById('monthTotal').textContent = yen(total);
 
+    const incomeEl = document.getElementById('incomeSummary');
+    if(incomeTotal > 0){
+      incomeEl.style.display = 'block';
+      incomeEl.textContent = `収入合計　${yen(incomeTotal)}`;
+    } else {
+      incomeEl.style.display = 'none';
+    }
+
     const byCat = {};
-    monthEntries.forEach(e=>{ byCat[e.category] = (byCat[e.category]||0) + e.amount; });
+    expenseEntries.forEach(e=>{ byCat[e.category] = (byCat[e.category]||0) + e.amount; });
     const box = document.getElementById('catBreakdown');
     box.innerHTML = '';
     const cats = Object.entries(byCat).sort((a,b)=>b[1]-a[1]);
@@ -633,10 +699,15 @@
       const cell = document.createElement('div');
       cell.className = 'day-cell' + (dateStr===today ? ' today':'') + (wd===0?' sun':'') + (wd===6?' sat':'');
       const dayEntries = entriesForDate(dateStr);
-      const dayTotal = dayEntries.reduce((s,e)=>s+e.amount,0);
+      const dayExpense = dayEntries.filter(e=>e.type!=='income').reduce((s,e)=>s+e.amount,0);
+      const dayIncome = dayEntries.filter(e=>e.type==='income').reduce((s,e)=>s+e.amount,0);
+      const badges = [
+        dayExpense>0 ? `<span class="day-total-tab">${yen(dayExpense)}</span>` : '',
+        dayIncome>0 ? `<span class="day-total-tab income">${yen(dayIncome)}</span>` : ''
+      ].join('');
       cell.innerHTML = `
         <span class="day-num">${d}</span>
-        ${dayTotal>0 ? `<span class="day-total-tab">${yen(dayTotal)}</span>` : ''}
+        ${badges ? `<div class="day-total-wrap">${badges}</div>` : ''}
       `;
       cell.addEventListener('click', ()=> openSheet(dateStr));
       grid.appendChild(cell);
@@ -659,6 +730,13 @@
     });
   }
 
+  function updateTypeToggleUI(){
+    document.querySelectorAll('#typeToggle .type-btn').forEach(btn=>{
+      btn.classList.toggle('selected', btn.dataset.type === selectedType);
+    });
+    document.getElementById('categoryField').style.display = selectedType === 'income' ? 'none' : 'block';
+  }
+
   function openSheet(dateStr){
     selectedDate = dateStr;
     const d = new Date(dateStr+'T00:00:00');
@@ -668,7 +746,9 @@
     document.getElementById('inputAmount').value='';
     document.getElementById('inputMemo').value='';
     selectedCategory = '食費';
+    selectedType = 'expense';
     buildCatChips();
+    updateTypeToggleUI();
     document.getElementById('overlay').classList.add('active');
   }
   function closeSheet(){
@@ -678,8 +758,12 @@
   function renderEntryList(){
     const list = document.getElementById('entryList');
     const dayEntries = entriesForDate(selectedDate);
-    const total = dayEntries.reduce((s,e)=>s+e.amount,0);
-    document.getElementById('sheetDayTotal').textContent = yen(total);
+    const dayExpense = dayEntries.filter(e=>e.type!=='income').reduce((s,e)=>s+e.amount,0);
+    const dayIncome = dayEntries.filter(e=>e.type==='income').reduce((s,e)=>s+e.amount,0);
+    const net = dayIncome - dayExpense;
+    const totalEl = document.getElementById('sheetDayTotal');
+    totalEl.textContent = (net > 0 ? '+' : '') + yen(net);
+    totalEl.style.color = net >= 0 && dayIncome > 0 ? 'var(--blue)' : 'var(--red)';
     list.innerHTML = '';
     if(dayEntries.length===0){
       list.innerHTML = '<div class="empty-note">この日の記録はまだありません</div>';
@@ -688,13 +772,16 @@
     dayEntries.forEach(e=>{
       const item = document.createElement('div');
       item.className = 'entry-item';
+      const isIncome = e.type === 'income';
+      const amountColor = isIncome ? 'var(--blue)' : 'var(--red)';
+      const amountText = (isIncome ? '+' : '') + yen(e.amount);
       item.innerHTML = `
-        <span class="entry-cat-dot" style="background:${catColor(e.category)}"></span>
+        <span class="entry-cat-dot" style="background:${entryColor(e)}"></span>
         <div class="entry-info">
           <div class="entry-memo">${e.memo ? escapeHtml(e.memo) : '（メモなし）'}</div>
-          <div class="entry-cat">${e.category}</div>
+          <div class="entry-cat">${isIncome ? '収入' : e.category}</div>
         </div>
-        <div class="entry-amount">${yen(e.amount)}</div>
+        <div class="entry-amount" style="color:${amountColor}">${amountText}</div>
         <button class="entry-del" data-id="${e.id}">✕</button>
       `;
       item.querySelector('.entry-del').addEventListener('click', ()=> deleteEntry(e.id));
@@ -727,14 +814,15 @@
       date: selectedDate,
       amount: amount,
       memo: memoVal,
-      category: selectedCategory
+      category: selectedType === 'income' ? '収入' : selectedCategory,
+      type: selectedType
     });
     await saveEntries();
     document.getElementById('inputAmount').value='';
     document.getElementById('inputMemo').value='';
     renderEntryList();
     renderCalendar();
-    showToast('記録しました');
+    showToast(selectedType === 'income' ? '収入を記録しました' : '記録しました');
   }
 
   document.querySelectorAll('.tab-btn').forEach(btn=>{
@@ -753,6 +841,13 @@
   document.getElementById('nextMonth').addEventListener('click', ()=>{
     currentMonth++; if(currentMonth>11){currentMonth=0; currentYear++;}
     renderCalendar();
+  });
+
+  document.querySelectorAll('#typeToggle .type-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      selectedType = btn.dataset.type;
+      updateTypeToggleUI();
+    });
   });
 
   document.getElementById('fabAdd').addEventListener('click', ()=> openSheet(todayStr()));
@@ -832,40 +927,60 @@
       const headers = parseCsvLine(lines[0]);
       const dateIdx = findColIndex(headers, ['取引日','日時','日付']);
       const outIdx = findColIndex(headers, ['出金']);
+      const incIdx = findColIndex(headers, ['入金']);
       const descIdx = findColIndex(headers, ['取引先','取引詳細','取引内容','内容','摘要']);
 
-      if(dateIdx === -1 || outIdx === -1){
+      if(dateIdx === -1 || (outIdx === -1 && incIdx === -1)){
         statusEl.classList.add('err');
         statusEl.textContent = 'このCSVの形式を認識できませんでした。手入力をお試しください。';
         return;
       }
 
-      let added = 0;
+      let addedExpense = 0;
+      let addedIncome = 0;
       for(let i=1;i<lines.length;i++){
         const row = parseCsvLine(lines[i]);
         const dateStr = parseDateCell(row[dateIdx]);
-        const amount = parseAmountCell(row[outIdx]);
-        if(!dateStr || !amount || amount<=0) continue;
+        if(!dateStr) continue;
         const memo = descIdx>=0 ? (row[descIdx]||'').trim() : '';
-        entries.push({
-          id: uid(),
-          date: dateStr,
-          amount: amount,
-          memo: memo,
-          category: 'その他'
-        });
-        added++;
+
+        const outAmount = outIdx>=0 ? parseAmountCell(row[outIdx]) : 0;
+        if(outAmount > 0){
+          entries.push({
+            id: uid(),
+            date: dateStr,
+            amount: outAmount,
+            memo: memo,
+            category: 'その他',
+            type: 'expense'
+          });
+          addedExpense++;
+        }
+
+        const inAmount = incIdx>=0 ? parseAmountCell(row[incIdx]) : 0;
+        if(inAmount > 0){
+          entries.push({
+            id: uid(),
+            date: dateStr,
+            amount: inAmount,
+            memo: memo,
+            category: '収入',
+            type: 'income'
+          });
+          addedIncome++;
+        }
       }
+      const added = addedExpense + addedIncome;
       if(added===0){
         statusEl.classList.add('err');
-        statusEl.textContent = '支出データが見つかりませんでした。入金や無効な行のみの可能性があります。';
+        statusEl.textContent = '支出・収入データが見つかりませんでした。無効な行のみの可能性があります。';
         return;
       }
       await saveEntries();
       statusEl.classList.add('ok');
-      statusEl.textContent = `${added}件の支出を取り込みました。カレンダーで確認できます（カテゴリは「その他」で登録されています。各日をタップして自由に編集してください）。`;
+      statusEl.textContent = `支出${addedExpense}件（赤）・収入${addedIncome}件（青）を取り込みました。カレンダーで確認できます（支出のカテゴリは「その他」で登録されています。各日をタップして自由に編集してください）。`;
       renderCalendar();
-      showToast(`${added}件を取り込みました`);
+      showToast(`支出${addedExpense}件・収入${addedIncome}件を取り込みました`);
     }catch(err){
       console.error(err);
       statusEl.classList.add('err');
