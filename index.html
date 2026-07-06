@@ -509,7 +509,7 @@
 
   <div class="panel" id="panel-import">
     <div class="import-box">
-      <p>PayPayアプリでダウンロードした取引履歴CSVを読み込むと、まとめてカレンダーに記録できます。「出金」は支出（赤）、「入金」は収入（青）として自動で登録されます。</p>
+      <p>PayPayアプリでダウンロードした取引履歴CSVを読み込むと、まとめてカレンダーに記録できます。「出金」は支出（赤）、「入金」は収入（青）として自動で登録されます。取引番号で重複を判定するため、同じ期間のCSVを読み込み直しても二重に加算されません。</p>
       <label class="file-label" for="csvFile">CSVファイルを選ぶ</label>
       <input type="file" id="csvFile" accept=".csv,text/csv">
       <div class="import-status" id="importStatus"></div>
@@ -929,6 +929,7 @@
       const outIdx = findColIndex(headers, ['出金']);
       const incIdx = findColIndex(headers, ['入金']);
       const descIdx = findColIndex(headers, ['取引先','取引詳細','取引内容','内容','摘要']);
+      const txIdIdx = findColIndex(headers, ['取引番号']);
 
       if(dateIdx === -1 || (outIdx === -1 && incIdx === -1)){
         statusEl.classList.add('err');
@@ -936,8 +937,13 @@
         return;
       }
 
+      // 既に取り込み済みの取引番号を集めておく（重複防止用）
+      const existingTxIds = new Set(entries.filter(e=>e.txId).map(e=>e.txId));
+      const hasTxIdCol = txIdIdx !== -1;
+
       let addedExpense = 0;
       let addedIncome = 0;
+      let skippedDup = 0;
       for(let i=1;i<lines.length;i++){
         const row = parseCsvLine(lines[i]);
         const dateStr = parseDateCell(row[dateIdx]);
@@ -945,6 +951,20 @@
         const memo = descIdx>=0 ? (row[descIdx]||'').trim() : '';
 
         const outAmount = outIdx>=0 ? parseAmountCell(row[outIdx]) : 0;
+        const inAmount = incIdx>=0 ? parseAmountCell(row[incIdx]) : 0;
+        if(outAmount<=0 && inAmount<=0) continue;
+
+        // 取引番号があればそれをキーに、無ければ日付+金額+メモで代用して重複判定
+        const txId = hasTxIdCol
+          ? (row[txIdIdx]||'').trim()
+          : `${dateStr}|${outAmount}|${inAmount}|${memo}`;
+
+        if(txId && existingTxIds.has(txId)){
+          skippedDup++;
+          continue;
+        }
+        if(txId) existingTxIds.add(txId);
+
         if(outAmount > 0){
           entries.push({
             id: uid(),
@@ -952,12 +972,12 @@
             amount: outAmount,
             memo: memo,
             category: 'その他',
-            type: 'expense'
+            type: 'expense',
+            txId: txId || undefined
           });
           addedExpense++;
         }
 
-        const inAmount = incIdx>=0 ? parseAmountCell(row[incIdx]) : 0;
         if(inAmount > 0){
           entries.push({
             id: uid(),
@@ -965,20 +985,27 @@
             amount: inAmount,
             memo: memo,
             category: '収入',
-            type: 'income'
+            type: 'income',
+            txId: txId || undefined
           });
           addedIncome++;
         }
       }
       const added = addedExpense + addedIncome;
-      if(added===0){
+      if(added===0 && skippedDup===0){
         statusEl.classList.add('err');
         statusEl.textContent = '支出・収入データが見つかりませんでした。無効な行のみの可能性があります。';
         return;
       }
+      if(added===0 && skippedDup>0){
+        statusEl.classList.add('ok');
+        statusEl.textContent = `新しい取引はありませんでした（すでに取り込み済みの${skippedDup}件をスキップしました）。`;
+        return;
+      }
       await saveEntries();
       statusEl.classList.add('ok');
-      statusEl.textContent = `支出${addedExpense}件（赤）・収入${addedIncome}件（青）を取り込みました。カレンダーで確認できます（支出のカテゴリは「その他」で登録されています。各日をタップして自由に編集してください）。`;
+      const dupNote = skippedDup>0 ? `（重複${skippedDup}件はスキップ）` : '';
+      statusEl.textContent = `支出${addedExpense}件（赤）・収入${addedIncome}件（青）を取り込みました${dupNote}。カレンダーで確認できます（支出のカテゴリは「その他」で登録されています。各日をタップして自由に編集してください）。`;
       renderCalendar();
       showToast(`支出${addedExpense}件・収入${addedIncome}件を取り込みました`);
     }catch(err){
